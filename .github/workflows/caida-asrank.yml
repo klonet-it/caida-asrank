@@ -39,17 +39,19 @@ jobs:
           -u https://api.asrank.caida.org/v2/graphql
         echo "TAG_NAME=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
 
+
     - name: Push to 'caida-data' branch
       run: |
-        cd caida-data
-        git init
-        git config user.name "${{ github.actor }}"
-        git config user.email "${{ github.actor }}@users.noreply.github.com"
-        git checkout -b caida-data
-        git add .
-        git commit -m "ASRank update ${{ env.TAG_NAME }}"
-        git remote add origin "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
-        git push -f origin caida-data
+	    cd caida-data
+	    git init
+	    git config user.name "${{ github.actor }}"
+	    git config user.email "${{ github.actor }}@users.noreply.github.com"
+	    git checkout -b caida-data
+	    git add .
+	    git commit -m "ASRank update ${{ env.TAG_NAME }}"
+	    git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+	    git push -f origin caida-data
+	
 
     - name: Create GitHub release
       uses: softprops/action-gh-release@v2
