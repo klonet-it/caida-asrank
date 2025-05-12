@@ -3,7 +3,7 @@ name: Download CAIDA ASRank
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 2 */3 * *"   # Ogni 3 giorni alle 02:00 UTC
+    - cron: "0 2 * * *"   # Every Day 02:00 UTC
 
 jobs:
   download:
