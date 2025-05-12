@@ -21,7 +21,7 @@ jobs:
     - name: Install dependencies
       run: |
         python3 -m pip install --upgrade pip
-        pip install requests
+        pip install requests graphqlclient
 
     - name: Download asrank-download.py
       run: |
