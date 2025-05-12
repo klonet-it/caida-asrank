@@ -1,0 +1,78 @@
+name: Download CAIDA ASRank
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 */3 * *"   # Ogni 3 giorni alle 02:00 UTC
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+
+    - name: Install dependencies
+      run: |
+        python3 -m pip install --upgrade pip
+        pip install requests
+
+    - name: Download asrank-download.py
+      run: |
+        curl -sSL -o asrank-download.py https://raw.githubusercontent.com/caida/asrank-rs/main/scripts/asrank-download.py
+        chmod +x asrank-download.py
+
+    - name: Download CAIDA ASRank data
+      run: |
+        mkdir -p caida-data
+        python3 asrank-download.py \
+          -v \
+          -a caida-data/asns.jsonl \
+          -o caida-data/organizations.jsonl \
+          -l caida-data/asnLinks.jsonl \
+          -u https://api.asrank.caida.org/v2/graphql
+        echo "TAG_NAME=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+
+    - name: Push to 'caida-data' branch
+      run: |
+        cd caida-data
+        git init
+        git config user.name "${{ github.actor }}"
+        git config user.email "${{ github.actor }}@users.noreply.github.com"
+        git checkout -b caida-data
+        git add .
+        git commit -m "ASRank update ${{ env.TAG_NAME }}"
+        git remote add origin "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+        git push -f origin caida-data
+
+    - name: Create GitHub release
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        name: CAIDA ASRank ${{ env.TAG_NAME }}
+        body: >
+          Dati CAIDA ASRank aggiornati al ${{ env.TAG_NAME }}
+        files: caida-data/*.jsonl
+
+    - name: Cleanup old releases
+      uses: dev-drprasad/delete-older-releases@v0.3.2
+      with:
+        keep_latest: 2
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Cleanup old workflow runs
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
+
