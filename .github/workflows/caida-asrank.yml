@@ -25,7 +25,7 @@ jobs:
 
     - name: Download asrank-download.py
       run: |
-        curl -sSL -o asrank-download.py https://raw.githubusercontent.com/caida/asrank-rs/main/scripts/asrank-download.py
+        curl -sSL -o asrank-download.py https://raw.githubusercontent.com/caida/asrank-rs/master/scripts/asrank-download.py
         chmod +x asrank-download.py
 
     - name: Download CAIDA ASRank data
