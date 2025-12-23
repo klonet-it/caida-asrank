@@ -3,78 +3,117 @@ name: Download CAIDA ASRank
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 2 * * *"   # Every Day 02:00 UTC
+    - cron: "0 2 * * *"   # Every day 02:00 UTC
+
+concurrency:
+  group: asrank-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
 
 jobs:
   download:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.10"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: Install dependencies
-      run: |
-        python3 -m pip install --upgrade pip
-        pip install requests graphqlclient
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install requests graphqlclient
 
-    - name: Download asrank-download.py
-      run: |
-        curl -sSL -o asrank-download.py https://catalog.caida.org/assets/recipe/how_to_download_from_asrank/asrank-download.py
-        chmod +x asrank-download.py
+      - name: Prepare variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "TAG_NAME=$(date -u +'%Y.%m.%d')" >> "$GITHUB_ENV"
 
-    - name: Download CAIDA ASRank data
-      run: |
-        mkdir -p caida-data
-        python3 asrank-download.py \
-          -v \
-          -a caida-data/asns.jsonl \
-          -o caida-data/organizations.jsonl \
-          -l caida-data/asnLinks.jsonl \
-          -u https://api.asrank.caida.org/v2/graphql
-        echo "TAG_NAME=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+      - name: Download asrank-download.py
+        run: |
+          curl -fsSL -o asrank-download.py https://catalog.caida.org/assets/recipe/how_to_download_from_asrank/asrank-download.py
+          chmod +x asrank-download.py
 
+      - name: Download CAIDA ASRank data
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf caida-data
+          mkdir -p caida-data
+          python3 asrank-download.py \
+            -v \
+            -a caida-data/asns.jsonl \
+            -o caida-data/organizations.jsonl \
+            -l caida-data/asnLinks.jsonl \
+            -u https://api.asrank.caida.org/v2/graphql
 
-    - name: Push to 'caida-data' branch
-      run: |
-            cd caida-data
-            git init
-            git config user.name "${{ github.actor }}"
-            git config user.email "${{ github.actor }}@users.noreply.github.com"
-            git checkout -b caida-data
-            git add .
-            git commit -m "ASRank update ${{ env.TAG_NAME }}"
-            git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
-            git push -f origin caida-data
-        
+          # fingerprint deterministico dei contenuti
+          (cd caida-data && sha256sum *.jsonl | sort) | sha256sum | awk '{print $1}' > caida-data/fingerprint.sha256
 
-    - name: Create GitHub release
-      uses: softprops/action-gh-release@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ env.TAG_NAME }}
-        name: CAIDA ASRank ${{ env.TAG_NAME }}
-        body: >
-          Dati CAIDA ASRank aggiornati al ${{ env.TAG_NAME }}
-        files: caida-data/*.jsonl
+      - name: Check if data changed vs caida-data branch
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    - name: Cleanup old releases
-      uses: dev-drprasad/delete-older-releases@v0.3.2
-      with:
-        keep_latest: 2
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREV_FP=""
+          if git ls-remote --exit-code origin refs/heads/caida-data >/dev/null 2>&1; then
+            git fetch origin caida-data --depth=1
+            if git show origin/caida-data:fingerprint.sha256 >/dev/null 2>&1; then
+              PREV_FP="$(git show origin/caida-data:fingerprint.sha256 | tr -d '\n')"
+            fi
+          fi
 
-    - name: Cleanup old workflow runs
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        retain_days: 0
-        keep_minimum_runs: 2
+          NEW_FP="$(tr -d '\n' < caida-data/fingerprint.sha256)"
+
+          if [ -n "$PREV_FP" ] && [ "$PREV_FP" = "$NEW_FP" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected (fingerprint identical)."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected."
+          fi
+
+      - name: Push to 'caida-data' branch (only if changed)
+        if: steps.changed.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BRANCH="caida-data"
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          # crea/switcha branch locale
+          if git show-ref --verify --quiet refs/heads/$BRANCH; then
+            git switch $BRANCH
+          else
+            git switch --orphan $BRANCH
+          fi
+
+          # pulisci working tree e copia solo i dati
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -r caida-data/* .
+
+          git add .
+          git commit -m "ASRank update ${{ env.TAG_NAME }}" || exit 0
+          git push -f origin $BRANCH
+
+      - name: Cleanup old workflow runs (older than 5 days)
+        uses: Mattraks/delete-workflow-runs@main
+        with:
+          retain_days: 5
+          keep_minimum_runs: 2
 
